@@ -1,8 +1,8 @@
 "use client";
 
 import { useLocale } from "./language-provider";
-import ptBR from "../../messages/pt-BR.json";
-import en from "../../messages/en.json";
+import ptBR from "./messages/pt-BR";
+import en from "./messages/en";
 
 const messages: Record<string, Record<string, unknown>> = {
   "pt-BR": ptBR,
