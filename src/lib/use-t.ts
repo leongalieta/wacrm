@@ -12,14 +12,18 @@ const messages: Record<string, Record<string, unknown>> = {
 export function useT(namespace: string) {
   const locale = useLocale() as keyof typeof messages;
   const ns = (messages[locale] || messages["pt-BR"]) as Record<string, unknown>;
-  const scope = (ns[namespace] || ns) as Record<string, string>;
+  const nsObj = ns[namespace] as Record<string, string> | undefined;
+  const scope = nsObj ?? ns as Record<string, unknown>;
 
   function t(key: string, params?: Record<string, string | number>): string {
-    let value = scope[key] || key;
-    if (params) {
+    const raw = (scope as Record<string, unknown>)[key];
+    const value = typeof raw === "string" ? raw : key;
+    if (params && typeof value === "string") {
+      let result = value;
       for (const [k, v] of Object.entries(params)) {
-        value = value.replace(`{${k}}`, String(v));
+        result = result.replace(`{${k}}`, String(v));
       }
+      return result;
     }
     return value;
   }

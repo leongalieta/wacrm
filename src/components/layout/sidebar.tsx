@@ -84,7 +84,7 @@ interface NavItem {
 }
 
 function useNavItems(): { navItems: NavItem[]; bottomNavItems: NavItem[] } {
-  const t = useT("nav");
+  const t = useT("sidebar");
   return {
     navItems: [
       { href: "/dashboard", label: t("dashboard"), icon: LayoutDashboard },
