@@ -2,7 +2,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useT } from '@/lib/use-t';
 
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
@@ -26,7 +26,7 @@ export default function SettingsPage() {
   const searchParams = useSearchParams();
   const { defaultCurrency } = useAuth();
   const { mode } = useTheme();
-  const t = useTranslations('settings');
+  const t = useT('settings');
 
   // The URL (`?tab=`) is the single source of truth for the active
   // section — deep-linkable, and it keeps the existing links in the

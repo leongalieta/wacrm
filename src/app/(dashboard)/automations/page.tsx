@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { useTranslations } from "next-intl"
+import { useT } from "@/lib/use-t"
 import { toast } from "sonner"
 import {
   Zap,
@@ -60,8 +60,8 @@ const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
 
 export default function AutomationsPage() {
   const router = useRouter()
-  const t = useTranslations("automations")
-  const tc = useTranslations("common")
+  const t = useT("automations")
+  const tc = useT("common")
   const canCreate = useCan("send-messages")
   const [automations, setAutomations] = useState<Automation[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -274,8 +274,8 @@ function AutomationCard({
   onDelete,
 }: {
   automation: Automation
-  t: ReturnType<typeof useTranslations<"automations">>
-  tc: ReturnType<typeof useTranslations<"common">>
+  t: ReturnType<typeof useT>
+  tc: ReturnType<typeof useT>
   onToggle: (next: boolean) => void
   onEdit: () => void
   onDuplicate: () => void

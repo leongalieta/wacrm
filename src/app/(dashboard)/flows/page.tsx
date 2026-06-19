@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { toast } from "sonner";
 import {
   Workflow,
@@ -78,8 +78,8 @@ const TEMPLATE_ICONS = {
 
 export default function FlowsPage() {
   const router = useRouter();
-  const t = useTranslations("flows");
-  const tc = useTranslations("common");
+  const t = useT("flows");
+  const tc = useT("common");
   const canCreate = useCan("send-messages");
   const [flows, setFlows] = useState<FlowRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -328,8 +328,8 @@ function EmptyState({
   onCreate,
   canCreate,
 }: {
-  t: ReturnType<typeof useTranslations<"flows">>;
-  tc: ReturnType<typeof useTranslations<"common">>;
+  t: ReturnType<typeof useT>;
+  tc: ReturnType<typeof useT>;
   onCreate: () => void;
   canCreate: boolean;
 }) {
@@ -365,8 +365,8 @@ function FlowCard({
   onDelete,
 }: {
   flow: FlowRow;
-  t: ReturnType<typeof useTranslations<"flows">>;
-  tc: ReturnType<typeof useTranslations<"common">>;
+  t: ReturnType<typeof useT>;
+  tc: ReturnType<typeof useT>;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -428,7 +428,7 @@ function FlowCard({
   );
 }
 
-function describeTrigger(flow: FlowRow, t: ReturnType<typeof useTranslations<"flows">>): string {
+function describeTrigger(flow: FlowRow, t: ReturnType<typeof useT>): string {
   if (flow.trigger_type === "keyword") {
     const keywords = Array.isArray(flow.trigger_config.keywords)
       ? (flow.trigger_config.keywords as string[])

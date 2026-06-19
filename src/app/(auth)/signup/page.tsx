@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -35,7 +35,7 @@ function SignupPageInner() {
   // points back at /join/<token> so the user lands on the redeem
   // step after verifying instead of being dropped on /dashboard.
   const inviteToken = searchParams.get("invite");
-  const t = useTranslations("auth");
+  const t = useT("auth");
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");

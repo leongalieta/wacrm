@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { useTotalUnread } from "@/hooks/use-total-unread";
@@ -84,7 +84,7 @@ interface NavItem {
 }
 
 function useNavItems(): { navItems: NavItem[]; bottomNavItems: NavItem[] } {
-  const t = useTranslations("nav");
+  const t = useT("nav");
   return {
     navItems: [
       { href: "/dashboard", label: t("dashboard"), icon: LayoutDashboard },
@@ -108,9 +108,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ open = false, onClose }: SidebarProps) {
-  const t = useTranslations("common");
-  const tSidebar = useTranslations("sidebar");
-  const tRole = useTranslations("roles");
+  const t = useT("common");
+  const tSidebar = useT("sidebar");
+  const tRole = useT("roles");
   const pathname = usePathname();
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
   const totalUnread = useTotalUnread();

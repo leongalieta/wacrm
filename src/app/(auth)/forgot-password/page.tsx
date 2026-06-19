@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -17,7 +17,7 @@ import {
 import { MessageSquare, CheckCircle, ArrowLeft } from "lucide-react";
 
 export default function ForgotPasswordPage() {
-  const t = useTranslations("auth");
+  const t = useT("auth");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

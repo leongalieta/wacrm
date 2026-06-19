@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +31,7 @@ export default function LoginPage() {
 }
 
 function LoginPageInner() {
-  const t = useTranslations("auth");
+  const t = useT("auth");
   const searchParams = useSearchParams();
   // Forwarded from `/join/<token>` when the visitor already has an
   // account. After a successful sign-in we send them to the join

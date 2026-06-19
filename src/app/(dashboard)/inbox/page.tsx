@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { createClient } from "@/lib/supabase/client";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
@@ -14,7 +14,7 @@ import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function InboxPage() {
-  const t = useTranslations("inbox");
+  const t = useT("inbox");
   const router = useRouter();
   const searchParams = useSearchParams();
   /**

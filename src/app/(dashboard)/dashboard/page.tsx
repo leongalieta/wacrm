@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from 'react'
-import { useTranslations } from 'next-intl'
+import { useT } from '@/lib/use-t'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
@@ -38,7 +38,7 @@ import { ActivityFeed } from '@/components/dashboard/activity-feed'
 type RangeDays = 7 | 30 | 90
 
 export default function DashboardPage() {
-  const t = useTranslations("dashboard")
+  const t = useT("dashboard")
   const { defaultCurrency } = useAuth()
   const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)

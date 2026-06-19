@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { useAuth } from "@/hooks/use-auth";
 import { LogOut, Menu, Settings as SettingsIcon, User } from "lucide-react";
 import {
@@ -47,7 +47,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
   const title = getPageTitle(pathname);
-  const t = useTranslations("header");
+  const t = useT("header");
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??

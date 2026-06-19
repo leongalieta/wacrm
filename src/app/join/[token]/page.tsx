@@ -1,6 +1,6 @@
 'use client';
 
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 
 // ============================================================
 // /join/[token] — invitation redemption landing page.
@@ -91,7 +91,7 @@ export default function JoinPage() {
   const params = useParams<{ token: string }>();
   const token = params?.token;
 
-  const t = useTranslations("join");
+  const t = useT("join");
   const [peek, setPeek] = useState<PeekResult | null>(null);
   // Local auth probe — the AuthProvider lives inside the (dashboard)
   // route group, so it doesn't reach this page. We hit Supabase

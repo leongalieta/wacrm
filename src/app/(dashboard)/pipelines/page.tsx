@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useTranslations } from "next-intl";
+import { useT } from "@/lib/use-t";
 import { createClient } from "@/lib/supabase/client";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
@@ -46,8 +46,8 @@ const SPEC_DEFAULT_STAGES = [
 ];
 
 export default function PipelinesPage() {
-  const t = useTranslations("pipelines");
-  const tc = useTranslations("common");
+  const t = useT("pipelines");
+  const tc = useT("common");
   const supabase = createClient();
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");

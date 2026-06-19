@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useT } from '@/lib/use-t';
 import { createClient } from '@/lib/supabase/client';
 import { Broadcast } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -59,8 +59,8 @@ function RateCell({
 
 export default function BroadcastsPage() {
   const router = useRouter();
-  const t = useTranslations('broadcasts');
-  const tc = useTranslations('common');
+  const t = useT('broadcasts');
+  const tc = useT('common');
   const canCreate = useCan('send-messages');
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
