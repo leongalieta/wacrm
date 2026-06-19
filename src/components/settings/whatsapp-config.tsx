@@ -17,6 +17,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { verifyEvolutionConnection } from '@/lib/whatsapp/evolution-api';
 import { useAuth } from '@/hooks/use-auth';
+import { useT } from '@/lib/use-t';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,6 +39,7 @@ type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
 
 export function WhatsAppConfig() {
+  const t = useT("whatsapp");
   const supabase = createClient();
   // After multi-user, whatsapp_config is one-row-per-account, not
   // one-row-per-user. We pull `accountId` straight off the auth
@@ -490,8 +492,8 @@ export function WhatsAppConfig() {
     return (
       <section className="animate-in fade-in-50 duration-200">
         <SettingsPanelHead
-          title="WhatsApp connection"
-          description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
+          title={t("title")}
+          description={t("description")}
         />
         <div className="flex items-center justify-center py-12">
           <Loader2 className="size-6 animate-spin text-primary" />
@@ -505,8 +507,8 @@ export function WhatsAppConfig() {
   return (
     <section className="animate-in fade-in-50 duration-200">
       <SettingsPanelHead
-        title="WhatsApp connection"
-        description="Connect your Meta WhatsApp Business API. Credentials, webhook, and setup steps all live here."
+        title={t("title")}
+        description={t("description")}
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
@@ -518,7 +520,7 @@ export function WhatsAppConfig() {
               <AlertTriangle className="size-5 text-amber-400 mt-0.5 shrink-0" />
               <div className="flex-1">
                 <AlertTitle className="text-amber-200 mb-1">
-                  Stored token can&apos;t be decrypted
+                  {t("storedTokenCorrupted")}
                 </AlertTitle>
                 <AlertDescription className="text-amber-100/80 text-sm">
                   {statusMessage}
@@ -532,12 +534,12 @@ export function WhatsAppConfig() {
                   {resetting ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
-                      Resetting...
+                      {t("resetting")}
                     </>
                   ) : (
                     <>
                       <RotateCcw className="size-4" />
-                      Reset Configuration
+                      {t("resetConfiguration")}
                     </>
                   )}
                 </Button>
@@ -555,18 +557,18 @@ export function WhatsAppConfig() {
               <XCircle className="size-4 text-red-500" />
             )}
             <AlertTitle className="text-foreground mb-0">
-              {connectionStatus === 'connected' ? 'Credentials valid' : 'Not Connected'}
+              {connectionStatus === 'connected' ? t("credentialsValid") : t("notConnected")}
             </AlertTitle>
           </div>
           <AlertDescription className="text-muted-foreground">
             {connectionStatus === 'connected'
               ? provider === 'evolution'
-                ? 'Connected via Evolution API'
-                : 'Your access token authenticates with Meta. See Registration status below for whether webhooks are actually wired.'
+                ? t("evolutionConnected")
+                : t("metaConnectedDesc")
               : statusMessage ||
                 (provider === 'evolution'
-                  ? 'Configure your Evolution API credentials below to connect your WhatsApp.'
-                  : 'Configure your Meta API credentials below to connect your WhatsApp Business account.')}
+                  ? t("evolutionNotConfigured")
+                  : t("metaNotConfigured"))}
           </AlertDescription>
         </Alert>
 
@@ -596,8 +598,8 @@ export function WhatsAppConfig() {
                   }
                 >
                   {isRegistered
-                    ? 'Registered — Meta will deliver events to wacrm'
-                    : 'Not registered — Meta will not deliver events'}
+                    ? t("registrationLive")
+                    : t("registrationNotLive")}
                 </AlertTitle>
               </div>
               <Button
@@ -612,7 +614,7 @@ export function WhatsAppConfig() {
                 ) : (
                   <Zap className="size-3.5" />
                 )}
-                Verify with Meta
+                  {t("verifyWithMeta")}
               </Button>
             </div>
             <AlertDescription className="text-muted-foreground mt-2 text-xs leading-relaxed">
@@ -681,9 +683,9 @@ export function WhatsAppConfig() {
         {/* Provider Selector */}
         <div className="rounded-xl border border-border bg-card p-5 space-y-4">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Provider</h3>
+            <h3 className="text-sm font-semibold text-foreground">{t("provider")}</h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Choose which WhatsApp API to use for sending and receiving messages.
+              {t("providerDesc")}
             </p>
           </div>
           <RadioGroup
@@ -693,11 +695,11 @@ export function WhatsAppConfig() {
           >
             <label className="flex items-center gap-2 cursor-pointer">
               <RadioGroupItem value="meta" />
-              <span className="text-sm text-foreground">Meta Cloud API</span>
+              <span className="text-sm text-foreground">{t("providerMeta")}</span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <RadioGroupItem value="evolution" />
-              <span className="text-sm text-foreground">Evolution API</span>
+              <span className="text-sm text-foreground">{t("providerEvolution")}</span>
             </label>
           </RadioGroup>
         </div>
@@ -705,20 +707,20 @@ export function WhatsAppConfig() {
         {/* API Credentials */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-foreground">API Credentials</CardTitle>
+            <CardTitle className="text-foreground">{t("apiCredentials")}</CardTitle>
             <CardDescription className="text-muted-foreground">
               {provider === 'evolution'
-                ? 'Enter your Evolution API server credentials.'
-                : 'Enter your Meta WhatsApp Business API credentials.'}
+                ? t("evolutionApiCredsDesc")
+                : t("apiCredsDesc")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {provider === 'evolution' ? (
               <>
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Evolution URL</Label>
+                  <Label className="text-muted-foreground">{t("evolutionUrl")}</Label>
                   <Input
-                    placeholder="https://evo.seuservidor.com"
+                    placeholder={t("evolutionUrlPlaceholder")}
                     value={evolutionUrl}
                     onChange={(e) => setEvolutionUrl(e.target.value)}
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
@@ -726,11 +728,11 @@ export function WhatsAppConfig() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">API Key</Label>
+                  <Label className="text-muted-foreground">{t("evolutionApiKey")}</Label>
                   <div className="relative">
                     <Input
                       type={showToken ? 'text' : 'password'}
-                      placeholder="Sua chave de API"
+                      placeholder={t("evolutionApiKeyPlaceholder")}
                       value={evolutionApiKey}
                       onChange={(e) => {
                         setEvolutionApiKey(e.target.value);
@@ -754,15 +756,15 @@ export function WhatsAppConfig() {
                   </div>
                   {config && !evolutionApiKeyEdited && (
                     <p className="text-xs text-muted-foreground">
-                      API key is hidden for security. Re-enter it to update configuration.
+                      {t("evolutionApiKeyHidden")}
                     </p>
                   )}
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Instance</Label>
+                  <Label className="text-muted-foreground">{t("evolutionInstance")}</Label>
                   <Input
-                    placeholder="nome-da-instancia"
+                    placeholder={t("evolutionInstancePlaceholder")}
                     value={evolutionInstance}
                     onChange={(e) => setEvolutionInstance(e.target.value)}
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
@@ -770,15 +772,15 @@ export function WhatsAppConfig() {
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Get these details from your Evolution API server admin panel.
+                  {t("evolutionCredsDesc")}
                 </p>
               </>
             ) : (
               <>
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Phone Number ID</Label>
+                  <Label className="text-muted-foreground">{t("phoneNumberId")}</Label>
                   <Input
-                    placeholder="e.g. 100234567890123"
+                    placeholder={t("phoneNumberIdPlaceholder")}
                     value={phoneNumberId}
                     onChange={(e) => setPhoneNumberId(e.target.value)}
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
@@ -786,9 +788,9 @@ export function WhatsAppConfig() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">WhatsApp Business Account ID</Label>
+                  <Label className="text-muted-foreground">{t("wabaId")}</Label>
                   <Input
-                    placeholder="e.g. 100234567890456"
+                    placeholder={t("wabaIdPlaceholder")}
                     value={wabaId}
                     onChange={(e) => setWabaId(e.target.value)}
                     className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
@@ -796,11 +798,11 @@ export function WhatsAppConfig() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-muted-foreground">Permanent Access Token</Label>
+                  <Label className="text-muted-foreground">{t("accessToken")}</Label>
                   <div className="relative">
                     <Input
                       type={showToken ? 'text' : 'password'}
-                      placeholder="Enter your access token"
+                      placeholder={t("accessTokenPlaceholder")}
                       value={accessToken}
                       onChange={(e) => {
                         setAccessToken(e.target.value);
@@ -824,7 +826,7 @@ export function WhatsAppConfig() {
                   </div>
                   {config && !tokenEdited && (
                     <p className="text-xs text-muted-foreground">
-                      Token is hidden for security. Re-enter it to update configuration.
+                      {t("tokenHidden")}
                     </p>
                   )}
                 </div>
