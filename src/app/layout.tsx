@@ -4,6 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 import { ThemeProvider } from "@/hooks/use-theme";
 import { ThemedToaster } from "@/components/themed-toaster";
+import { LanguageProvider } from "@/lib/language-provider";
 import {
   DEFAULT_MODE,
   DEFAULT_THEME,
@@ -104,8 +105,10 @@ export default function RootLayout({
       </head>
       <body className="min-h-full bg-background text-foreground font-sans">
         <ThemeProvider>
-          {children}
-          <ThemedToaster />
+          <LanguageProvider>
+            {children}
+            <ThemedToaster />
+          </LanguageProvider>
         </ThemeProvider>
       </body>
     </html>

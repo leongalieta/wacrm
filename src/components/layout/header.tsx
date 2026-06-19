@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useAuth } from "@/hooks/use-auth";
 import { LogOut, Menu, Settings as SettingsIcon, User } from "lucide-react";
 import {
@@ -46,6 +47,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
   const pathname = usePathname();
   const { profile, signOut } = useAuth();
   const title = getPageTitle(pathname);
+  const t = useTranslations("header");
 
   const initial =
     profile?.full_name?.charAt(0)?.toUpperCase() ??
@@ -59,7 +61,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         <button
           type="button"
           onClick={onOpenSidebar}
-          aria-label="Open menu"
+          aria-label={t("openMenu")}
           className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
         >
           <Menu className="h-5 w-5" />
@@ -75,7 +77,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         <DropdownMenu>
         <DropdownMenuTrigger
           className="flex items-center gap-2 rounded-md px-1 py-1 transition-colors hover:bg-muted/70 focus:bg-muted/70 focus:outline-none data-popup-open:bg-muted/70 sm:gap-3 sm:pl-1 sm:pr-3"
-          aria-label="Open account menu"
+          aria-label={t("openAccountMenu")}
         >
           <Avatar className="size-8">
             {profile?.avatar_url ? (
@@ -115,7 +117,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             }
           >
             <User className="size-4" />
-            Profile
+            {t("profile")}
           </DropdownMenuItem>
           <DropdownMenuItem
             render={
@@ -126,7 +128,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             }
           >
             <SettingsIcon className="size-4" />
-            Settings
+            {t("settings")}
           </DropdownMenuItem>
           <DropdownMenuSeparator className="bg-border" />
           <DropdownMenuItem
@@ -134,7 +136,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
             className="text-popover-foreground focus:bg-accent focus:text-accent-foreground"
           >
             <LogOut className="size-4" />
-            Sign out
+            {t("signOut")}
           </DropdownMenuItem>
         </DropdownMenuContent>
         </DropdownMenu>
