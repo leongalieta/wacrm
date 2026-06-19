@@ -6,6 +6,11 @@ import {
   sendMediaMessage,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
+import {
+  sendEvolutionText,
+  sendEvolutionMedia,
+  sendEvolutionTemplate,
+} from '@/lib/whatsapp/evolution-api'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { supabaseAdmin } from '@/lib/flows/admin-client'
 import {
@@ -179,28 +184,6 @@ export async function POST(request: Request) {
       )
     }
 
-    const accessToken = decrypt(config.access_token)
-
-    // Self-heal legacy CBC-encrypted tokens. Fire-and-forget: we
-    // return from the send without waiting, so a failed upgrade just
-    // means the next send tries again. The upgrade is idempotent —
-    // concurrent sends both produce valid GCM ciphertexts of the same
-    // plaintext, last write wins.
-    if (isLegacyFormat(config.access_token)) {
-      void supabase
-        .from('whatsapp_config')
-        .update({ access_token: encrypt(accessToken) })
-        .eq('id', config.id)
-        .then(({ error }) => {
-          if (error) {
-            console.warn(
-              '[whatsapp/send] access_token GCM upgrade failed:',
-              error.message,
-            )
-          }
-        })
-    }
-
     // Resolve the reply target (if any) to its Meta message_id, which is
     // what `context.message_id` on the outgoing Meta payload needs. The
     // parent must belong to this same conversation — otherwise a caller
@@ -232,119 +215,198 @@ export async function POST(request: Request) {
       }
     }
 
-    // Send via Meta API — retry with phone-number variants if Meta rejects
-    // with "recipient not in allowed list" (common in sandbox / when a
-    // number was registered with/without a trunk 0). If an alternate
-    // format succeeds, we persist it back to the contact row so the
-    // next send goes through on the first attempt.
+    // Send via WhatsApp API
     let waMessageId = ''
     let workingPhone = sanitizedPhone
 
-    // For template sends, load the row so sendTemplateMessage can
-    // build header + button components from the template definition.
-    // Match on (user_id, name, language) — same triple the unique
-    // index enforces — so multi-language templates work correctly.
-    // Missing template falls through with `templateRow = null` and
-    // the legacy body-only path runs.
-    // Load the template row so sendTemplateMessage can build header
-    // + button components from the definition. isMessageTemplate
-    // guards against a malformed row (e.g. from a partial sync)
-    // crashing the send-builder later in the stack.
-    let templateRow: MessageTemplate | null = null
-    if (message_type === 'template' && template_name) {
-      const { data } = await supabase
-        .from('message_templates')
-        .select('*')
-        .eq('account_id', accountId)
-        .eq('name', template_name)
-        .eq('language', template_language || 'en_US')
-        .maybeSingle()
-      if (data && !isMessageTemplate(data)) {
+    if (config.provider === 'evolution') {
+      const evolutionApiKey = decrypt(config.evolution_api_key)
+
+      if (isLegacyFormat(config.evolution_api_key)) {
+        void supabase
+          .from('whatsapp_config')
+          .update({ evolution_api_key: encrypt(evolutionApiKey) })
+          .eq('id', config.id)
+          .then(({ error }) => {
+            if (error) {
+              console.warn(
+                '[whatsapp/send] evolution_api_key GCM upgrade failed:',
+                error.message,
+              )
+            }
+          })
+      }
+
+      try {
+        if (message_type === 'template') {
+          const result = await sendEvolutionTemplate(
+            config.evolution_url,
+            evolutionApiKey,
+            config.evolution_instance,
+            workingPhone,
+            template_name,
+            template_language || 'en_US',
+          )
+          waMessageId = result?.key?.id || ''
+        } else if (isMediaKind) {
+          const result = await sendEvolutionMedia({
+            url: config.evolution_url,
+            apikey: evolutionApiKey,
+            instance: config.evolution_instance,
+            number: workingPhone,
+            mediatype: message_type as 'image' | 'video' | 'document' | 'audio',
+            media: media_url,
+            caption: content_text || undefined,
+            fileName: filename || undefined,
+          })
+          waMessageId = result?.key?.id || ''
+        } else {
+          const result = await sendEvolutionText({
+            url: config.evolution_url,
+            apikey: evolutionApiKey,
+            instance: config.evolution_instance,
+            number: workingPhone,
+            text: content_text,
+          })
+          waMessageId = result?.key?.id || ''
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown Evolution API error'
+        console.error('Evolution API send failed:', message)
         return NextResponse.json(
-          {
-            error:
-              'Template row is malformed locally — run "Sync from Meta" in Settings to repair it.',
-          },
-          { status: 500 },
+          { error: `Evolution API error: ${message}` },
+          { status: 502 }
         )
       }
-      templateRow = data ?? null
-    }
+    } else {
+      const accessToken = decrypt(config.access_token)
 
-    const attempt = async (phone: string): Promise<string> => {
-      if (message_type === 'template') {
-        const result = await sendTemplateMessage({
-          phoneNumberId: config.phone_number_id,
-          accessToken,
-          to: phone,
-          templateName: template_name,
-          language: template_language || 'en_US',
-          template: templateRow ?? undefined,
-          messageParams: template_message_params ?? undefined,
-          // Legacy body-only fallback — only consulted when
-          // messageParams.body isn't set.
-          params: template_params || [],
-          contextMessageId,
-        })
-        return result.messageId
+      if (isLegacyFormat(config.access_token)) {
+        void supabase
+          .from('whatsapp_config')
+          .update({ access_token: encrypt(accessToken) })
+          .eq('id', config.id)
+          .then(({ error }) => {
+            if (error) {
+              console.warn(
+                '[whatsapp/send] access_token GCM upgrade failed:',
+                error.message,
+              )
+            }
+          })
       }
-      if (isMediaKind) {
-        // content_text doubles as the caption (ignored for audio inside
-        // sendMediaMessage). filename surfaces in the recipient's chat
-        // for documents only.
-        const result = await sendMediaMessage({
-          phoneNumberId: config.phone_number_id,
-          accessToken,
-          to: phone,
-          kind: message_type as MediaKind,
-          link: media_url,
-          caption: content_text || undefined,
-          filename: filename || undefined,
-          contextMessageId,
-        })
-        return result.messageId
-      }
-      const result = await sendTextMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: phone,
-        text: content_text,
-        contextMessageId,
-      })
-      return result.messageId
-    }
 
-    try {
-      const variants = phoneVariants(sanitizedPhone)
-      let lastError: unknown = null
-
-      for (const variant of variants) {
-        try {
-          waMessageId = await attempt(variant)
-          workingPhone = variant
-          lastError = null
-          break
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
-          // Only retry when the failure is specifically that the
-          // recipient isn't in Meta's allowed list. Any other error
-          // (bad token, invalid template, etc.) bubbles up immediately.
-          if (!isRecipientNotAllowedError(message)) {
-            throw err
-          }
-          lastError = err
-          console.warn(`[whatsapp/send] variant "${variant}" rejected by Meta, trying next…`)
+      // For template sends, load the row so sendTemplateMessage can
+      // build header + button components from the template definition.
+      // Match on (user_id, name, language) — same triple the unique
+      // index enforces — so multi-language templates work correctly.
+      // Missing template falls through with `templateRow = null` and
+      // the legacy body-only path runs.
+      // Load the template row so sendTemplateMessage can build header
+      // + button components from the definition. isMessageTemplate
+      // guards against a malformed row (e.g. from a partial sync)
+      // crashing the send-builder later in the stack.
+      let templateRow: MessageTemplate | null = null
+      if (message_type === 'template' && template_name) {
+        const { data } = await supabase
+          .from('message_templates')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('name', template_name)
+          .eq('language', template_language || 'en_US')
+          .maybeSingle()
+        if (data && !isMessageTemplate(data)) {
+          return NextResponse.json(
+            {
+              error:
+                'Template row is malformed locally — run "Sync from Meta" in Settings to repair it.',
+            },
+            { status: 500 },
+          )
         }
+        templateRow = data ?? null
       }
 
-      if (lastError) throw lastError
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown Meta API error'
-      console.error('Meta API send failed for all variants:', message)
-      return NextResponse.json(
-        { error: `Meta API error: ${message}` },
-        { status: 502 }
-      )
+      const attempt = async (phone: string): Promise<string> => {
+        if (message_type === 'template') {
+          const result = await sendTemplateMessage({
+            phoneNumberId: config.phone_number_id,
+            accessToken,
+            to: phone,
+            templateName: template_name,
+            language: template_language || 'en_US',
+            template: templateRow ?? undefined,
+            messageParams: template_message_params ?? undefined,
+            // Legacy body-only fallback — only consulted when
+            // messageParams.body isn't set.
+            params: template_params || [],
+            contextMessageId,
+          })
+          return result.messageId
+        }
+        if (isMediaKind) {
+          // content_text doubles as the caption (ignored for audio inside
+          // sendMediaMessage). filename surfaces in the recipient's chat
+          // for documents only.
+          const result = await sendMediaMessage({
+            phoneNumberId: config.phone_number_id,
+            accessToken,
+            to: phone,
+            kind: message_type as MediaKind,
+            link: media_url,
+            caption: content_text || undefined,
+            filename: filename || undefined,
+            contextMessageId,
+          })
+          return result.messageId
+        }
+        const result = await sendTextMessage({
+          phoneNumberId: config.phone_number_id,
+          accessToken,
+          to: phone,
+          text: content_text,
+          contextMessageId,
+        })
+        return result.messageId
+      }
+
+      // Retry with phone-number variants if Meta rejects
+      // with "recipient not in allowed list" (common in sandbox / when a
+      // number was registered with/without a trunk 0). If an alternate
+      // format succeeds, we persist it back to the contact row so the
+      // next send goes through on the first attempt.
+      try {
+        const variants = phoneVariants(sanitizedPhone)
+        let lastError: unknown = null
+
+        for (const variant of variants) {
+          try {
+            waMessageId = await attempt(variant)
+            workingPhone = variant
+            lastError = null
+            break
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err)
+            // Only retry when the failure is specifically that the
+            // recipient isn't in Meta's allowed list. Any other error
+            // (bad token, invalid template, etc.) bubbles up immediately.
+            if (!isRecipientNotAllowedError(message)) {
+              throw err
+            }
+            lastError = err
+            console.warn(`[whatsapp/send] variant "${variant}" rejected by Meta, trying next…`)
+          }
+        }
+
+        if (lastError) throw lastError
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown Meta API error'
+        console.error('Meta API send failed for all variants:', message)
+        return NextResponse.json(
+          { error: `Meta API error: ${message}` },
+          { status: 502 }
+        )
+      }
     }
 
     // If a non-original variant succeeded, update the contact so future

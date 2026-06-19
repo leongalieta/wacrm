@@ -78,7 +78,8 @@ interface WhatsAppWebhookEntry {
   }>
 }
 
-// GET - Webhook verification
+// GET - Webhook verification (Meta only).
+// Evolution webhooks do not use GET verification — they just POST events.
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -160,11 +161,27 @@ export async function GET(request: Request) {
   }
 }
 
-// POST - Receive messages
+// POST - Receive messages (Meta or Evolution)
 export async function POST(request: Request) {
   // Read raw body first so we can HMAC-verify the exact bytes Meta
   // signed. request.json() would re-encode and break the signature.
   const rawBody = await request.text()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let body: any
+  try {
+    body = JSON.parse(rawBody)
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+  }
+
+  // Evolution webhook — no signature verification. Payload has `event`
+  // and `data` fields (e.g. "messages.upsert") instead of Meta's `entry`.
+  if (body.event === 'messages.upsert' && body.data) {
+    return handleEvolutionWebhook(body)
+  }
+
+  // Meta webhook — verify signature before processing
   const signature = request.headers.get('x-hub-signature-256')
 
   if (!verifyMetaWebhookSignature(rawBody, signature)) {
@@ -173,13 +190,6 @@ export async function POST(request: Request) {
     // rather than silently eating events.
     console.warn('[webhook] rejected request with invalid signature')
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
-  }
-
-  let body: { entry?: WhatsAppWebhookEntry[] }
-  try {
-    body = JSON.parse(rawBody)
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
   // Process asynchronously so we can ack Meta within their timeout.
@@ -279,6 +289,228 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         )
       }
     }
+  }
+}
+
+// ================================================================
+// Evolution API webhook handler
+// ================================================================
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleEvolutionWebhook(body: any) {
+  const { data } = body
+
+  if (!data?.key?.remoteJid) {
+    return NextResponse.json({ status: 'received' }, { status: 200 })
+  }
+
+  // Strip @s.whatsapp.net or @c.us suffix to get the bare phone number
+  const rawPhone: string = data.key.remoteJid
+  const phone = rawPhone.replace(/@s\.whatsapp\.net$/, '').replace(/@c\.us$/, '')
+
+  // Ignore outbound messages echoed back by Evolution
+  if (data.key.fromMe) {
+    return NextResponse.json({ status: 'received' }, { status: 200 })
+  }
+
+  // Look up Evolution config. A single account typically has one connected
+  // Evolution instance. If none or ambiguous, ack 200 so Evolution doesn't
+  // retry forever — the operator can check logs for the reason.
+  const { data: configRows, error: configError } = await supabaseAdmin()
+    .from('whatsapp_config')
+    .select('*')
+    .eq('provider', 'evolution')
+    .eq('status', 'connected')
+
+  if (configError) {
+    console.error('[evolution] Config lookup error:', configError)
+    return NextResponse.json({ status: 'received' }, { status: 200 })
+  }
+
+  if (!configRows || configRows.length === 0) {
+    console.error('[evolution] No connected Evolution config found')
+    return NextResponse.json({ status: 'received' }, { status: 200 })
+  }
+
+  if (configRows.length > 1) {
+    console.error(
+      `[evolution] Multiple connected Evolution configs (${configRows.length}) — cannot determine which one to use`,
+    )
+    return NextResponse.json({ status: 'received' }, { status: 200 })
+  }
+
+  const config = configRows[0]
+
+  const msgData = data.message || {}
+  const messageId: string = data.key.id
+  const messageTimestamp = String(
+    data.messageTimestamp || Math.floor(Date.now() / 1000),
+  )
+
+  const message = buildEvolutionMessage(messageId, phone, messageTimestamp, msgData)
+
+  const contact = {
+    profile: { name: data.pushName || phone },
+    wa_id: phone,
+  }
+
+  // Evolution configs store null for access_token — only decrypt when present
+  const decryptedAccessToken = config.access_token
+    ? decrypt(config.access_token)
+    : ''
+
+  await processMessage(
+    message,
+    contact,
+    config.account_id,
+    config.user_id,
+    decryptedAccessToken,
+  )
+
+  return NextResponse.json({ status: 'received' }, { status: 200 })
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildEvolutionMessage(
+  messageId: string,
+  phone: string,
+  timestamp: string,
+  msgData: any,
+): WhatsAppMessage {
+  // Text
+  if (msgData.conversation) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'text',
+      text: { body: msgData.conversation },
+    }
+  }
+
+  if (msgData.extendedTextMessage?.text) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'text',
+      text: { body: msgData.extendedTextMessage.text },
+    }
+  }
+
+  // Image
+  if (msgData.imageMessage) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'image',
+      image: {
+        id: messageId,
+        mime_type: msgData.imageMessage.mimetype || 'image/jpeg',
+        caption: msgData.imageMessage.caption || undefined,
+      },
+    }
+  }
+
+  // Video
+  if (msgData.videoMessage) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'video',
+      video: {
+        id: messageId,
+        mime_type: msgData.videoMessage.mimetype || 'video/mp4',
+        caption: msgData.videoMessage.caption || undefined,
+      },
+    }
+  }
+
+  // Audio
+  if (msgData.audioMessage) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'audio',
+      audio: {
+        id: messageId,
+        mime_type: msgData.audioMessage.mimetype || 'audio/ogg',
+      },
+    }
+  }
+
+  // Document
+  if (msgData.documentMessage) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'document',
+      document: {
+        id: messageId,
+        mime_type:
+          msgData.documentMessage.mimetype || 'application/octet-stream',
+        filename: msgData.documentMessage.filename || undefined,
+        caption: msgData.documentMessage.caption || undefined,
+      },
+    }
+  }
+
+  // Sticker
+  if (msgData.stickerMessage) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'sticker',
+      sticker: {
+        id: messageId,
+        mime_type: msgData.stickerMessage.mimetype || 'image/webp',
+      },
+    }
+  }
+
+  // Location
+  if (msgData.locationMessage) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'location',
+      location: {
+        latitude: msgData.locationMessage.degreesLatitude,
+        longitude: msgData.locationMessage.degreesLongitude,
+        name: msgData.locationMessage.name || undefined,
+        address: msgData.locationMessage.address || undefined,
+      },
+    }
+  }
+
+  // Reaction
+  if (msgData.reactionMessage) {
+    return {
+      id: messageId,
+      from: phone,
+      timestamp,
+      type: 'reaction',
+      reaction: {
+        message_id: msgData.reactionMessage.key?.id || '',
+        emoji: msgData.reactionMessage.text || '',
+      },
+    }
+  }
+
+  // Fallback — treat unknown message shapes as text so the inbox still
+  // shows something instead of silently dropping the event.
+  return {
+    id: messageId,
+    from: phone,
+    timestamp,
+    type: 'text',
+    text: { body: `[Unknown Evolution message type]` },
   }
 }
 

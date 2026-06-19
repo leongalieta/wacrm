@@ -6,6 +6,7 @@ import {
   subscribeWabaToApp,
   verifyPhoneNumber,
 } from '@/lib/whatsapp/meta-api'
+import { verifyEvolutionConnection } from '@/lib/whatsapp/evolution-api'
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 
 /**
@@ -87,7 +88,7 @@ export async function GET() {
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
-      .select('phone_number_id, access_token, status')
+      .select('provider, phone_number_id, access_token, status, evolution_url, evolution_api_key, evolution_instance')
       .eq('account_id', accountId)
       .maybeSingle()
 
@@ -110,11 +111,28 @@ export async function GET() {
       )
     }
 
+    const effectiveProvider = config.provider || 'meta'
+
     // Try to decrypt the stored token with the current ENCRYPTION_KEY.
     // If this fails, the key changed (or was never consistent across envs).
     let accessToken: string
     try {
-      accessToken = decrypt(config.access_token)
+      if (effectiveProvider === 'evolution') {
+        if (!config.evolution_api_key) {
+          return NextResponse.json(
+            {
+              connected: false,
+              reason: 'no_config',
+              message: 'Evolution config is incomplete.',
+              provider: effectiveProvider,
+            },
+            { status: 200 },
+          )
+        }
+        accessToken = decrypt(config.evolution_api_key)
+      } else {
+        accessToken = decrypt(config.access_token)
+      }
     } catch (err) {
       console.error('[whatsapp/config GET] Token decryption failed:', err)
       return NextResponse.json(
@@ -129,13 +147,29 @@ export async function GET() {
       )
     }
 
+    // Evolution: skip Meta phone verification — return connection status
+    // based on the stored config and the decrypted api_key.
+    if (effectiveProvider === 'evolution') {
+      return NextResponse.json({
+        connected: config.status === 'connected',
+        provider: effectiveProvider,
+        evolution_url: config.evolution_url,
+        evolution_api_key: accessToken,
+        evolution_instance: config.evolution_instance,
+      })
+    }
+
     // Validate credentials against Meta
     try {
       const phoneInfo = await verifyPhoneNumber({
         phoneNumberId: config.phone_number_id,
         accessToken,
       })
-      return NextResponse.json({ connected: true, phone_info: phoneInfo })
+      return NextResponse.json({
+        connected: true,
+        provider: effectiveProvider,
+        phone_info: phoneInfo,
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown Meta API error'
       console.error('[whatsapp/config GET] Meta API verification failed:', message)
@@ -144,6 +178,7 @@ export async function GET() {
           connected: false,
           reason: 'meta_api_error',
           message: `Meta API rejected the credentials: ${message}`,
+          provider: effectiveProvider,
         },
         { status: 200 }
       )
@@ -185,11 +220,131 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { phone_number_id, waba_id, access_token, verify_token, pin } = body
+    const {
+      phone_number_id,
+      waba_id,
+      access_token,
+      verify_token,
+      pin,
+      provider,
+      evolution_url,
+      evolution_api_key,
+      evolution_instance,
+    } = body
+
+    const effectiveProvider: 'meta' | 'evolution' = provider || 'meta'
+
+    let phoneInfo: unknown = null
+    let registrationSkipped = false
+
+    // ------------------------------------------------------------------
+    // EVOLUTION PROVIDER PATH
+    // ------------------------------------------------------------------
+    if (effectiveProvider === 'evolution') {
+      if (!evolution_url || !evolution_api_key || !evolution_instance) {
+        return NextResponse.json(
+          { error: 'evolution_url, evolution_api_key, and evolution_instance are required for the Evolution provider' },
+          { status: 400 },
+        )
+      }
+
+      const evoResult = await verifyEvolutionConnection(
+        evolution_url,
+        evolution_api_key,
+        evolution_instance,
+      )
+
+      if (!evoResult.ok) {
+        return NextResponse.json(
+          { error: `Evolution API error: ${evoResult.error}` },
+          { status: 400 },
+        )
+      }
+
+      let encryptedEvolutionApiKey: string
+      try {
+        encryptedEvolutionApiKey = encrypt(evolution_api_key)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown encryption error'
+        console.error('Encryption failed:', message)
+        return NextResponse.json(
+          {
+            error:
+              'Failed to encrypt token. Check that ENCRYPTION_KEY is a valid 64-character hex string in your environment variables.',
+          },
+          { status: 500 },
+        )
+      }
+
+      const { data: existing } = await supabase
+        .from('whatsapp_config')
+        .select('id')
+        .eq('account_id', accountId)
+        .maybeSingle()
+
+      const baseRow = {
+        provider: 'evolution' as const,
+        evolution_url,
+        evolution_api_key: encryptedEvolutionApiKey,
+        evolution_instance,
+        phone_number_id: null,
+        waba_id: null,
+        access_token: null,
+        verify_token: null,
+        status: 'connected' as const,
+        connected_at: new Date().toISOString(),
+        registered_at: null,
+        subscribed_apps_at: null,
+        last_registration_error: null,
+        updated_at: new Date().toISOString(),
+      }
+
+      if (existing) {
+        const { error: updateError } = await supabase
+          .from('whatsapp_config')
+          .update(baseRow)
+          .eq('account_id', accountId)
+
+        if (updateError) {
+          console.error('Error updating whatsapp_config:', updateError)
+          return NextResponse.json(
+            { error: 'Failed to update configuration' },
+            { status: 500 },
+          )
+        }
+      } else {
+        const { error: insertError } = await supabase
+          .from('whatsapp_config')
+          .insert({
+            account_id: accountId,
+            user_id: user.id,
+            ...baseRow,
+          })
+
+        if (insertError) {
+          console.error('Error inserting whatsapp_config:', insertError)
+          return NextResponse.json(
+            { error: 'Failed to save configuration' },
+            { status: 500 },
+          )
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        saved: true,
+        provider: 'evolution',
+        instance_status: evoResult.status,
+      })
+    }
+
+    // ------------------------------------------------------------------
+    // META PROVIDER PATH (existing logic)
+    // ------------------------------------------------------------------
 
     if (!access_token || !phone_number_id) {
       return NextResponse.json(
-        { error: 'access_token and phone_number_id are required' },
+        { error: 'access_token and phone_number_id are required for the Meta provider' },
         { status: 400 }
       )
     }
@@ -236,7 +391,6 @@ export async function POST(request: Request) {
     }
 
     // Verify credentials with Meta BEFORE saving
-    let phoneInfo
     try {
       phoneInfo = await verifyPhoneNumber({
         phoneNumberId: phone_number_id,
@@ -294,7 +448,6 @@ export async function POST(request: Request) {
     // True when registration was deliberately skipped because no PIN
     // was supplied (see below). Distinct from registrationError — this
     // is not a failure, just an incomplete-but-valid save.
-    let registrationSkipped = false
 
     const needsRegistration = !sameNumber || (typeof pin === 'string' && pin.length > 0)
     if (needsRegistration) {
@@ -354,6 +507,7 @@ export async function POST(request: Request) {
     // store the credentials and the error so the UI can guide the
     // user through a retry.
     const baseRow = {
+      provider: 'meta' as const,
       phone_number_id,
       waba_id: waba_id || null,
       access_token: encryptedAccessToken,

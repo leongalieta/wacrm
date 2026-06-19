@@ -15,11 +15,13 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { verifyEvolutionConnection } from '@/lib/whatsapp/evolution-api';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
 import {
@@ -60,6 +62,12 @@ export function WhatsAppConfig() {
   const [verifyToken, setVerifyToken] = useState('');
   const [pin, setPin] = useState('');
   const [tokenEdited, setTokenEdited] = useState(false);
+
+  const [provider, setProvider] = useState<'meta' | 'evolution'>('meta');
+  const [evolutionUrl, setEvolutionUrl] = useState('');
+  const [evolutionApiKey, setEvolutionApiKey] = useState('');
+  const [evolutionApiKeyEdited, setEvolutionApiKeyEdited] = useState(false);
+  const [evolutionInstance, setEvolutionInstance] = useState('');
 
   // True once /register has succeeded on Meta's side (timestamp set
   // in the row). When false, the saved config is metadata-only and
@@ -106,42 +114,75 @@ export function WhatsAppConfig() {
 
       if (data) {
         setConfig(data);
+        setProvider(data.provider || 'meta');
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
+        setEvolutionUrl(data.evolution_url || '');
+        setEvolutionApiKey(data.evolution_api_key ? MASKED_TOKEN : '');
+        setEvolutionApiKeyEdited(false);
+        setEvolutionInstance(data.evolution_instance || '');
       } else {
         setConfig(null);
+        setProvider('meta');
         setPhoneNumberId('');
         setWabaId('');
         setAccessToken('');
         setVerifyToken('');
         setPin('');
         setTokenEdited(false);
+        setEvolutionUrl('');
+        setEvolutionApiKey('');
+        setEvolutionApiKeyEdited(false);
+        setEvolutionInstance('');
       }
       // Clear any stale probe result when reloading the row.
       setRegistrationProbe(null);
 
-      // Then verify health via the API (decrypts token + pings Meta)
+      // Then verify health via the API (decrypts token + pings provider)
       if (data) {
-        try {
-          const res = await fetch('/api/whatsapp/config', { method: 'GET' });
-          const payload = await res.json();
-
-          if (payload.connected) {
-            setConnectionStatus('connected');
-            setResetReason(null);
-            setStatusMessage('');
-          } else {
+        const isEvolution = data.provider === 'evolution';
+        if (isEvolution && data.evolution_url && data.evolution_api_key && data.evolution_instance) {
+          try {
+            const result = await verifyEvolutionConnection(
+              data.evolution_url,
+              data.evolution_api_key,
+              data.evolution_instance,
+            );
+            if (result.ok) {
+              setConnectionStatus('connected');
+              setResetReason(null);
+              setStatusMessage('');
+            } else {
+              setConnectionStatus('disconnected');
+              setResetReason(null);
+              setStatusMessage(result.error || '');
+            }
+          } catch (err) {
+            console.error('Evolution health check failed:', err);
             setConnectionStatus('disconnected');
-            setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
-            setStatusMessage(payload.message || '');
           }
-        } catch (err) {
-          console.error('Health check failed:', err);
-          setConnectionStatus('disconnected');
+        } else if (!isEvolution) {
+          try {
+            const res = await fetch('/api/whatsapp/config', { method: 'GET' });
+            const payload = await res.json();
+
+            if (payload.connected) {
+              setConnectionStatus('connected');
+              setResetReason(null);
+              setStatusMessage('');
+            } else {
+              setConnectionStatus('disconnected');
+              setResetReason(payload.needs_reset ? 'token_corrupted' : payload.reason === 'meta_api_error' ? 'meta_api_error' : null);
+              setStatusMessage(payload.message || '');
+            }
+          } catch (err) {
+            console.error('Health check failed:', err);
+            setConnectionStatus('disconnected');
+          }
         }
       } else {
         setConnectionStatus('disconnected');
@@ -171,6 +212,66 @@ export function WhatsAppConfig() {
   }, [authLoading, profileLoading, user, accountId, fetchConfig]);
 
   async function handleSave() {
+    if (provider === 'evolution') {
+      if (!evolutionUrl.trim()) {
+        toast.error('Evolution URL is required');
+        return;
+      }
+      if (!evolutionApiKey.trim() || evolutionApiKey === MASKED_TOKEN) {
+        toast.error('API Key is required');
+        return;
+      }
+      if (!evolutionInstance.trim()) {
+        toast.error('Instance name is required');
+        return;
+      }
+
+      try {
+        setSaving(true);
+        const payload: Record<string, unknown> = {
+          provider: 'evolution',
+          evolution_url: evolutionUrl.trim(),
+          evolution_instance: evolutionInstance.trim(),
+        };
+        if (evolutionApiKeyEdited && evolutionApiKey !== MASKED_TOKEN && evolutionApiKey.trim()) {
+          payload.evolution_api_key = evolutionApiKey.trim();
+        } else if (config) {
+          toast.error('Please re-enter the API Key to save changes');
+          setSaving(false);
+          return;
+        }
+
+        const res = await fetch('/api/whatsapp/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          toast.error(data.error || 'Failed to save configuration');
+          return;
+        }
+
+        const connected = data.connected ?? data.status === 'connected';
+        if (connected) {
+          toast.success('WhatsApp connected via Evolution API. Events will start flowing.');
+        } else if (data.status) {
+          toast.success(`Evolution API saved. Instance status: ${data.status}`);
+        } else {
+          toast.success('Evolution API configuration saved.');
+        }
+        if (accountId) await fetchConfig(accountId);
+      } catch (err) {
+        console.error('Save error:', err);
+        toast.error('Failed to save configuration');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     if (!phoneNumberId.trim()) {
       toast.error('Phone Number ID is required');
       return;
@@ -268,6 +369,27 @@ export function WhatsAppConfig() {
   async function handleTestConnection() {
     try {
       setTesting(true);
+
+      if (provider === 'evolution') {
+        const result = await verifyEvolutionConnection(
+          evolutionUrl.trim(),
+          evolutionApiKey === MASKED_TOKEN ? '' : evolutionApiKey.trim(),
+          evolutionInstance.trim(),
+        );
+        if (result.ok) {
+          setConnectionStatus('connected');
+          setResetReason(null);
+          setStatusMessage('');
+          toast.success(`Connected via Evolution API — instance status: ${result.status}`);
+        } else {
+          setConnectionStatus('disconnected');
+          setResetReason(null);
+          setStatusMessage(result.error || '');
+          toast.error(result.error || 'Evolution API connection failed');
+        }
+        return;
+      }
+
       const res = await fetch('/api/whatsapp/config', { method: 'GET' });
       const payload = await res.json();
 
@@ -338,11 +460,16 @@ export function WhatsAppConfig() {
 
       toast.success('Configuration cleared. You can now re-enter your credentials.');
       setConfig(null);
+      setProvider('meta');
       setPhoneNumberId('');
       setWabaId('');
       setAccessToken('');
       setVerifyToken('');
       setTokenEdited(false);
+      setEvolutionUrl('');
+      setEvolutionApiKey('');
+      setEvolutionApiKeyEdited(false);
+      setEvolutionInstance('');
       setConnectionStatus('disconnected');
       setResetReason(null);
       setStatusMessage('');
@@ -433,9 +560,13 @@ export function WhatsAppConfig() {
           </div>
           <AlertDescription className="text-muted-foreground">
             {connectionStatus === 'connected'
-              ? 'Your access token authenticates with Meta. See Registration status below for whether webhooks are actually wired.'
+              ? provider === 'evolution'
+                ? 'Connected via Evolution API'
+                : 'Your access token authenticates with Meta. See Registration status below for whether webhooks are actually wired.'
               : statusMessage ||
-                'Configure your Meta API credentials below to connect your WhatsApp Business account.'}
+                (provider === 'evolution'
+                  ? 'Configure your Evolution API credentials below to connect your WhatsApp.'
+                  : 'Configure your Meta API credentials below to connect your WhatsApp Business account.')}
           </AlertDescription>
         </Alert>
 
@@ -444,7 +575,7 @@ export function WhatsAppConfig() {
             without a successful /register call the number won't
             receive inbound events. Surface this dimension separately
             so users don't trust a misleading green banner. */}
-        {config && (
+        {provider === 'meta' && config && (
           <Alert
             className={
               isRegistered
@@ -547,115 +678,205 @@ export function WhatsAppConfig() {
           </Alert>
         )}
 
+        {/* Provider Selector */}
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Provider</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              Choose which WhatsApp API to use for sending and receiving messages.
+            </p>
+          </div>
+          <RadioGroup
+            value={provider}
+            onValueChange={(val) => setProvider(val as 'meta' | 'evolution')}
+            className="flex gap-6"
+          >
+            <label className="flex items-center gap-2 cursor-pointer">
+              <RadioGroupItem value="meta" />
+              <span className="text-sm text-foreground">Meta Cloud API</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <RadioGroupItem value="evolution" />
+              <span className="text-sm text-foreground">Evolution API</span>
+            </label>
+          </RadioGroup>
+        </div>
+
         {/* API Credentials */}
         <Card>
           <CardHeader>
             <CardTitle className="text-foreground">API Credentials</CardTitle>
             <CardDescription className="text-muted-foreground">
-              Enter your Meta WhatsApp Business API credentials.
+              {provider === 'evolution'
+                ? 'Enter your Evolution API server credentials.'
+                : 'Enter your Meta WhatsApp Business API credentials.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Phone Number ID</Label>
-              <Input
-                placeholder="e.g. 100234567890123"
-                value={phoneNumberId}
-                onChange={(e) => setPhoneNumberId(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
+            {provider === 'evolution' ? (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Evolution URL</Label>
+                  <Input
+                    placeholder="https://evo.seuservidor.com"
+                    value={evolutionUrl}
+                    onChange={(e) => setEvolutionUrl(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">WhatsApp Business Account ID</Label>
-              <Input
-                placeholder="e.g. 100234567890456"
-                value={wabaId}
-                onChange={(e) => setWabaId(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">API Key</Label>
+                  <div className="relative">
+                    <Input
+                      type={showToken ? 'text' : 'password'}
+                      placeholder="Sua chave de API"
+                      value={evolutionApiKey}
+                      onChange={(e) => {
+                        setEvolutionApiKey(e.target.value);
+                        setEvolutionApiKeyEdited(true);
+                      }}
+                      onFocus={() => {
+                        if (evolutionApiKey === MASKED_TOKEN) {
+                          setEvolutionApiKey('');
+                          setEvolutionApiKeyEdited(true);
+                        }
+                      }}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowToken(!showToken)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {config && !evolutionApiKeyEdited && (
+                    <p className="text-xs text-muted-foreground">
+                      API key is hidden for security. Re-enter it to update configuration.
+                    </p>
+                  )}
+                </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Permanent Access Token</Label>
-              <div className="relative">
-                <Input
-                  type={showToken ? 'text' : 'password'}
-                  placeholder="Enter your access token"
-                  value={accessToken}
-                  onChange={(e) => {
-                    setAccessToken(e.target.value);
-                    setTokenEdited(true);
-                  }}
-                  onFocus={() => {
-                    if (accessToken === MASKED_TOKEN) {
-                      setAccessToken('');
-                      setTokenEdited(true);
-                    }
-                  }}
-                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowToken(!showToken)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
-              {config && !tokenEdited && (
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Instance</Label>
+                  <Input
+                    placeholder="nome-da-instancia"
+                    value={evolutionInstance}
+                    onChange={(e) => setEvolutionInstance(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+
                 <p className="text-xs text-muted-foreground">
-                  Token is hidden for security. Re-enter it to update configuration.
+                  Get these details from your Evolution API server admin panel.
                 </p>
-              )}
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Phone Number ID</Label>
+                  <Input
+                    placeholder="e.g. 100234567890123"
+                    value={phoneNumberId}
+                    onChange={(e) => setPhoneNumberId(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">Webhook Verify Token</Label>
-              <Input
-                placeholder="Create a custom verify token"
-                value={verifyToken}
-                onChange={(e) => setVerifyToken(e.target.value)}
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
-              />
-              <p className="text-xs text-muted-foreground">
-                A custom string you create. Must match the token you set in Meta webhook settings.
-              </p>
-            </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">WhatsApp Business Account ID</Label>
+                  <Input
+                    placeholder="e.g. 100234567890456"
+                    value={wabaId}
+                    onChange={(e) => setWabaId(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <Label className="text-muted-foreground">
-                Two-step verification PIN
-                <span className="ml-1 text-muted-foreground">(optional)</span>
-              </Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="6-digit PIN from Meta WhatsApp Manager"
-                value={pin}
-                onChange={(e) =>
-                  setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
-                }
-                className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
-              />
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Needed only to wire <strong className="text-muted-foreground">inbound</strong> messages
-                for a <strong className="text-muted-foreground">production</strong> number. Set it in{' '}
-                <strong className="text-muted-foreground">
-                  Meta Business Manager → WhatsApp Accounts → Phone
-                  Numbers → Two-step verification
-                </strong>
-                , then paste it here so wacrm can subscribe the number —
-                otherwise Meta routes inbound events to whichever app
-                last claimed it (the symptom that hits second numbers
-                under a shared WABA).{' '}
-                <strong className="text-muted-foreground">Meta test numbers</strong> have no
-                PIN and are pre-registered — leave this blank for them.
-                Leaving it blank also keeps an existing registration
-                untouched.
-              </p>
-            </div>
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Permanent Access Token</Label>
+                  <div className="relative">
+                    <Input
+                      type={showToken ? 'text' : 'password'}
+                      placeholder="Enter your access token"
+                      value={accessToken}
+                      onChange={(e) => {
+                        setAccessToken(e.target.value);
+                        setTokenEdited(true);
+                      }}
+                      onFocus={() => {
+                        if (accessToken === MASKED_TOKEN) {
+                          setAccessToken('');
+                          setTokenEdited(true);
+                        }
+                      }}
+                      className="bg-muted border-border text-foreground placeholder:text-muted-foreground pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowToken(!showToken)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {showToken ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                  {config && !tokenEdited && (
+                    <p className="text-xs text-muted-foreground">
+                      Token is hidden for security. Re-enter it to update configuration.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Webhook Verify Token</Label>
+                  <Input
+                    placeholder="Create a custom verify token"
+                    value={verifyToken}
+                    onChange={(e) => setVerifyToken(e.target.value)}
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    A custom string you create. Must match the token you set in Meta webhook settings.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">
+                    Two-step verification PIN
+                    <span className="ml-1 text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="6-digit PIN from Meta WhatsApp Manager"
+                    value={pin}
+                    onChange={(e) =>
+                      setPin(e.target.value.replace(/\D/g, '').slice(0, 6))
+                    }
+                    className="bg-muted border-border text-foreground placeholder:text-muted-foreground tracking-widest"
+                  />
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Needed only to wire <strong className="text-muted-foreground">inbound</strong> messages
+                    for a <strong className="text-muted-foreground">production</strong> number. Set it in{' '}
+                    <strong className="text-muted-foreground">
+                      Meta Business Manager → WhatsApp Accounts → Phone
+                      Numbers → Two-step verification
+                    </strong>
+                    , then paste it here so wacrm can subscribe the number —
+                    otherwise Meta routes inbound events to whichever app
+                    last claimed it (the symptom that hits second numbers
+                    under a shared WABA).{' '}
+                    <strong className="text-muted-foreground">Meta test numbers</strong> have no
+                    PIN and are pre-registered — leave this blank for them.
+                    Leaving it blank also keeps an existing registration
+                    untouched.
+                  </p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -664,7 +885,9 @@ export function WhatsAppConfig() {
           <CardHeader>
             <CardTitle className="text-foreground">Webhook Configuration</CardTitle>
             <CardDescription className="text-muted-foreground">
-              Use this URL as your webhook callback in the Meta App Dashboard.
+              {provider === 'evolution'
+                ? 'Point your Evolution API instance webhook to this URL.'
+                : 'Use this URL as your webhook callback in the Meta App Dashboard.'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -748,6 +971,92 @@ export function WhatsAppConfig() {
 
       {/* Setup Instructions Sidebar */}
       <div>
+        {provider === 'evolution' ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-foreground text-base">Setup Instructions</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                Follow these steps to connect via Evolution API.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Accordion>
+                <AccordionItem className="border-border">
+                  <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">1</span>
+                      Install Evolution API
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="text-muted-foreground">
+                    <ol className="list-decimal list-inside space-y-1 text-sm">
+                      <li>Run on your server with Docker</li>
+                      <li>Use the official Evolution API Docker image</li>
+                      <li>Expose the API port for external access</li>
+                    </ol>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem className="border-border">
+                  <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">2</span>
+                      Create an Instance
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="text-muted-foreground">
+                    <ol className="list-decimal list-inside space-y-1 text-sm">
+                      <li>In the admin panel, create a new WhatsApp instance</li>
+                      <li>Choose a recognizable instance name</li>
+                    </ol>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem className="border-border">
+                  <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">3</span>
+                      Connect WhatsApp
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="text-muted-foreground">
+                    <ol className="list-decimal list-inside space-y-1 text-sm">
+                      <li>Scan the QR Code in the instance panel</li>
+                      <li>Wait for the connection to establish</li>
+                    </ol>
+                  </AccordionContent>
+                </AccordionItem>
+
+                <AccordionItem className="border-border">
+                  <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                    <span className="flex items-center gap-2">
+                      <span className="flex size-5 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">4</span>
+                      Configure Webhook
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="text-muted-foreground">
+                    <ol className="list-decimal list-inside space-y-1 text-sm">
+                      <li>In the instance panel, point the webhook to:</li>
+                      <li><code className="text-primary text-xs">{webhookUrl}</code></li>
+                    </ol>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+
+              <div className="mt-4 pt-4 border-t border-border">
+                <a
+                  href="https://doc.evolution-api.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
+                >
+                  <ExternalLink className="size-3.5" />
+                  Evolution API Documentation
+                </a>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
         <Card>
           <CardHeader>
             <CardTitle className="text-foreground text-base">Setup Instructions</CardTitle>
@@ -839,6 +1148,7 @@ export function WhatsAppConfig() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
     </section>
